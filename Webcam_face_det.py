@@ -1,31 +1,33 @@
 import cv2
 
-# Load Haar Cascade for face detection
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+# Model files (already in your project folder)
+configFile = "deploy.prototxt"
+modelFile = "res10_300x300_ssd_iter_140000.caffemodel"
 
-# Open default webcam
-cap = cv2.VideoCapture(0)
+net = cv2.dnn.readNetFromCaffe(configFile, modelFile)
+
+cap = cv2.VideoCapture(0)  # use 0 for webcam, 1 if external camera
 
 while True:
     ret, frame = cap.read()
     if not ret:
-        print("Failed to grab frame from webcam")
         break
 
-    # Convert to grayscale (needed for Haar cascade)
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    h, w = frame.shape[:2]
+    blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 1.0,
+                                 (300, 300), (104.0, 177.0, 123.0))
+    net.setInput(blob)
+    detections = net.forward()
 
-    # Detect faces
-    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+    for i in range(detections.shape[2]):
+        confidence = detections[0, 0, i, 2]
+        if confidence > 0.5:  # threshold
+            box = detections[0, 0, i, 3:7] * [w, h, w, h]
+            (startX, startY, endX, endY) = box.astype("int")
+            cv2.rectangle(frame, (startX, startY), (endX, endY), (0, 255, 0), 2)
 
-    # Draw rectangles around faces
-    for (x, y, w, h) in faces:
-        cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-
-    cv2.imshow("Webcam Face Detection", frame)
-
-    # Press 'q' to quit
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    cv2.imshow("Face Detection", frame)
+    if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 
 cap.release()
