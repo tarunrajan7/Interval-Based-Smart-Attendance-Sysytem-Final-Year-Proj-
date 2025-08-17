@@ -1,37 +1,32 @@
 import cv2
 import face_recognition
 
-# Load your face image
+# Load your known face
 known_image = face_recognition.load_image_file("tarun.jpg")
 known_encoding = face_recognition.face_encodings(known_image)[0]
 
-# Store encodings and names
 known_encodings = [known_encoding]
 known_names = ["Tarun"]
 
-frame_count = 0
-
-# Start webcam
+# Webcam
 video_capture = cv2.VideoCapture(0)
+
+process_this_frame = True
 
 while True:
     ret, frame = video_capture.read()
     if not ret:
         break
 
-    # Resize frame to 1/4 size for faster processing
-    small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+    # Resize less (0.75 instead of 0.25)
+    small_frame = cv2.resize(frame, (0, 0), fx=0.75, fy=0.75)
     rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
 
-    face_locations = []
-    face_names = []
-
-    # Process every 3rd frame
-    frame_count += 1
-    if frame_count % 3 == 0:
+    if process_this_frame:
         face_locations = face_recognition.face_locations(rgb_small_frame, model="hog")
         face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
 
+        face_names = []
         for face_encoding in face_encodings:
             matches = face_recognition.compare_faces(known_encodings, face_encoding)
             name = "Unknown"
@@ -42,19 +37,23 @@ while True:
 
             face_names.append(name)
 
-    # Draw results (scale back to original frame size)
+    process_this_frame = not process_this_frame  # skip every 2nd frame for speed
+
+    # Draw boxes
     for (top, right, bottom, left), name in zip(face_locations, face_names):
-        top *= 4
-        right *= 4
-        bottom *= 4
-        left *= 4
+        # Scale back up
+        scale = 4/3  # since fx=0.75
+        top = int(top * scale)
+        right = int(right * scale)
+        bottom = int(bottom * scale)
+        left = int(left * scale)
 
         cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
         cv2.rectangle(frame, (left, bottom - 35), (right, bottom), (0, 255, 0), cv2.FILLED)
         cv2.putText(frame, name, (left + 6, bottom - 6),
                     cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1)
 
-    cv2.imshow('Video', frame)
+    cv2.imshow('Face Recognition', frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
