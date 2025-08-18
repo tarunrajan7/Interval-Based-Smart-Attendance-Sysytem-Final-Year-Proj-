@@ -1,15 +1,15 @@
 import cv2
 
-# Correct RTSP URL
-rtsp_url = "rtsp://test:Test%40123@192.168.101.63:554/Streaming/Channels/2101"
-
-cap = cv2.VideoCapture(rtsp_url)
+# Replace with your RTSP link
+cap = cv2.VideoCapture("rtsp://test:Test@123@192.168.101.63:554/Streaming/Channels/2101")
 
 while True:
     ret, frame = cap.read()
     if not ret:
-        print("Failed to grab frame")
         break
+
+    # Resize to fit your screen (example: 1280x720)
+    frame = cv2.resize(frame, (1280, 720))
 
     cv2.imshow("Lab Camera Stream", frame)
 
