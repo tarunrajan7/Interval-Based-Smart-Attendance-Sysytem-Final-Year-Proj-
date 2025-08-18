@@ -4,7 +4,7 @@ import cv2
 cap = cv2.VideoCapture("rtsp://test:Test@123@192.168.101.63:554/Streaming/Channels/2101")
 
 # Set desired screen resolution
-screen_res = 1920, 1080 
+screen_res = 1280, 720  
 
 while True:
     ret, frame = cap.read()
