@@ -14,7 +14,7 @@ video_capture = cv2.VideoCapture("rtsp://test:Test@123@192.168.101.63:554/Stream
 # Desired display resolution
 screen_res = 1280, 720
 
-process_this_frame = True
+frame_count = 0  # to skip frames
 
 while True:
     ret, frame = video_capture.read()
@@ -22,16 +22,21 @@ while True:
         print("Failed to grab frame from lab camera")
         break
 
-    # Resize frame to 50% for faster CNN detection
-    small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
+    frame_count += 1
+
+    # Resize frame to 25% for faster HOG detection
+    small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
     rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
 
-    if process_this_frame:
-        # CNN face detection for accuracy
-        face_locations = face_recognition.face_locations(rgb_small_frame, model="cnn")
+    face_locations = []
+    face_names = []
+
+    # Process every 2nd frame for speed
+    if frame_count % 2 == 0:
+        # HOG detector (fast on CPU)
+        face_locations = face_recognition.face_locations(rgb_small_frame, model="hog")
         face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
 
-        face_names = []
         for face_encoding in face_encodings:
             matches = face_recognition.compare_faces(known_encodings, face_encoding)
             name = "Unknown"
@@ -40,12 +45,9 @@ while True:
                 name = known_names[first_match_index]
             face_names.append(name)
 
-    process_this_frame = not process_this_frame  # skip every 2nd frame
-
-    # Draw boxes and resize to fit screen while keeping aspect ratio
+    # Draw boxes and scale back up
     for (top, right, bottom, left), name in zip(face_locations, face_names):
-        # Scale back up to match original frame
-        scale = 2  # since fx=0.5
+        scale = 4  # since fx=0.25
         top = int(top * scale)
         right = int(right * scale)
         bottom = int(bottom * scale)
@@ -56,16 +58,15 @@ while True:
         cv2.putText(frame, name, (left + 6, bottom - 6),
                     cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1)
 
-    # --- Resize frame to fit screen while keeping aspect ratio ---
+    # Resize for display while keeping aspect ratio
     scale_width = screen_res[0] / frame.shape[1]
     scale_height = screen_res[1] / frame.shape[0]
     scale = min(scale_width, scale_height)
     window_width = int(frame.shape[1] * scale)
     window_height = int(frame.shape[0] * scale)
     display_frame = cv2.resize(frame, (window_width, window_height))
-    # -------------------------------------------------------------
 
-    cv2.imshow('Lab Camera Face Recognition (CNN)', display_frame)
+    cv2.imshow('Lab Camera Face Recognition (HOG)', display_frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
