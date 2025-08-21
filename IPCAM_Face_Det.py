@@ -1,19 +1,14 @@
 import cv2
+import threading
 
-# RTSP with reduced buffering
-cap = cv2.VideoCapture(
-    "rtsp://test:Test@123@192.168.101.63:554/Streaming/Channels/2101",
-    cv2.CAP_FFMPEG
-)
+# RTSP Camera URL
+cap = cv2.VideoCapture("rtsp://test:Test@123@192.168.101.63:554/Streaming/Channels/2101")
 
-# Set buffer size to 1 frame only (important for low latency)
-cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
-# Load YuNet Face Detector
+# Load YuNet model
 model = "face_detection_yunet_2023mar.onnx"
 detector = cv2.FaceDetectorYN.create(
     model, "",
-    (160, 120),   # much smaller input size → faster
+    (320, 240),  # smaller input size → faster
     score_threshold=0.8,
     nms_threshold=0.3,
     top_k=5000,
@@ -21,28 +16,52 @@ detector = cv2.FaceDetectorYN.create(
     target_id=cv2.dnn.DNN_TARGET_CPU
 )
 
+# Desired display resolution
 screen_res = (1280, 720)
 
+# Threaded frame grabber
+class VideoStream:
+    def __init__(self, src):
+        self.cap = cv2.VideoCapture(src)
+        self.ret, self.frame = self.cap.read()
+        self.running = True
+        threading.Thread(target=self.update, daemon=True).start()
+
+    def update(self):
+        while self.running:
+            self.ret, self.frame = self.cap.read()
+
+    def read(self):
+        return self.ret, self.frame
+
+    def stop(self):
+        self.running = False
+        self.cap.release()
+
+vs = VideoStream("rtsp://test:Test@123@192.168.101.63:554/Streaming/Channels/2101")
+
+frame_count = 0
+faces = None
+
 while True:
-    ret, frame = cap.read()
+    ret, frame = vs.read()
     if not ret:
         break
 
-    # Downscale frame for detection only
-    small_frame = cv2.resize(frame, (320, 240))
-    detector.setInputSize((320, 240))
-    faces = detector.detect(small_frame)
+    frame_count += 1
+    h, w = frame.shape[:2]
+    detector.setInputSize((w, h))
 
-    # Scale detections back to original frame
-    if faces[1] is not None:
-        h_ratio = frame.shape[0] / 240
-        w_ratio = frame.shape[1] / 320
+    # Run detection every 5 frames only
+    if frame_count % 5 == 0:
+        faces = detector.detect(frame)
+
+    # Draw faces
+    if faces is not None and faces[1] is not None:
         for face in faces[1]:
             x, y, w, h = map(int, face[:4])
             conf = face[-1]
             if conf > 0.8:
-                # Scale coords to original frame size
-                x, y, w, h = int(x * w_ratio), int(y * h_ratio), int(w * w_ratio), int(h * h_ratio)
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
                 cv2.putText(frame, f"{conf:.2f}", (x, y - 5),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
@@ -55,10 +74,10 @@ while True:
     window_height = int(frame.shape[0] * scale)
     frame = cv2.resize(frame, (window_width, window_height))
 
-    cv2.imshow("YuNet Low-Latency", frame)
+    cv2.imshow("YuNet Face Detection (Optimized)", frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-cap.release()
+vs.stop()
 cv2.destroyAllWindows()
