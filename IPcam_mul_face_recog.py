@@ -2,6 +2,8 @@ import cv2
 import threading
 import face_recognition
 import numpy as np
+import glob
+import os
 
 # ----------------- RTSP Camera -----------------
 RTSP_URL = "rtsp://test:Test@123@192.168.101.63:554/Streaming/Channels/401"
@@ -18,15 +20,31 @@ detector = cv2.FaceDetectorYN.create(
     target_id=cv2.dnn.DNN_TARGET_CPU
 )
 
-# ----------------- Known Faces (using face_recognition) -----------------
+# ----------------- Known Faces (Multi-Posture) -----------------
 known_encodings = []
 known_names = []
 
-# Example: Add your known face
-img = face_recognition.load_image_file("tarun.jpg")
-encoding = face_recognition.face_encodings(img)[0]
-known_encodings.append(encoding)
-known_names.append("Tarun")
+def add_person(name, folder_dir):
+    """
+    Add all images of a person from a folder.
+    Example: folder_dir = r"T:\TARUN\EIE\Final Yr Proj\Tarun_Faces"
+    """
+    # Load all jpg and png files in the folder
+    images = glob.glob(os.path.join(folder_dir, "*.jpg")) + glob.glob(os.path.join(folder_dir, "*.png"))
+    print(f"[INFO] Loading {len(images)} images for {name}")
+
+    for img_path in images:
+        img = face_recognition.load_image_file(img_path)
+        encs = face_recognition.face_encodings(img)
+        if len(encs) > 0:
+            known_encodings.append(encs[0])
+            known_names.append(name)
+            print(f"[OK] Added {os.path.basename(img_path)}")
+        else:
+            print(f"[WARNING] No face found in {os.path.basename(img_path)}")
+
+# ✅ Add your folder here
+add_person("Tarun", r"T:\TARUN\EIE\Final Yr Proj\Tarun_Faces")
 
 # ----------------- Threaded Frame Grabber -----------------
 class VideoStream:
