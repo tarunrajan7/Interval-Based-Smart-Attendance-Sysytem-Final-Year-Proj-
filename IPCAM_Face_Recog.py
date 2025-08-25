@@ -1,70 +1,114 @@
 import cv2
+import threading
 import face_recognition
+import numpy as np
 
-# --- Known face(s) ---
-known_image = face_recognition.load_image_file("tarun.jpg")
-known_encoding = face_recognition.face_encodings(known_image)[0]
-known_encodings = [known_encoding]
-known_names = ["Tarun"]
+# ----------------- RTSP Camera -----------------
+RTSP_URL = "rtsp://test:Test@123@192.168.101.63:554/Streaming/Channels/2101"
 
-# --- RTSP (with low-latency hints) ---
-rtsp = "rtsp://test:Test@123@192.168.101.63:554/Streaming/Channels/2101"
-cap = cv2.VideoCapture(rtsp, cv2.CAP_FFMPEG)   # use FFMPEG backend
-cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)            # drop old buffered frames
+# ----------------- Load YuNet Detector -----------------
+det_model = "face_detection_yunet_2023mar.onnx"
+detector = cv2.FaceDetectorYN.create(
+    det_model, "",
+    (320, 240),
+    score_threshold=0.8,
+    nms_threshold=0.3,
+    top_k=5000,
+    backend_id=cv2.dnn.DNN_BACKEND_OPENCV,
+    target_id=cv2.dnn.DNN_TARGET_CPU
+)
 
-# --- Target window size (no 'zoom') ---
-screen_res = (1280, 720)  # (width, height)
+# ----------------- Known Faces (using face_recognition) -----------------
+known_encodings = []
+known_names = []
 
-process_this_frame = True
-face_locations, face_names = [], []
+# Example: Add your known face
+img = face_recognition.load_image_file("tarun.jpg")
+encoding = face_recognition.face_encodings(img)[0]
+known_encodings.append(encoding)
+known_names.append("Tarun")
+
+# ----------------- Threaded Frame Grabber -----------------
+class VideoStream:
+    def __init__(self, src):
+        self.cap = cv2.VideoCapture(src)
+        self.ret, self.frame = self.cap.read()
+        self.running = True
+        threading.Thread(target=self.update, daemon=True).start()
+
+    def update(self):
+        while self.running:
+            self.ret, self.frame = self.cap.read()
+
+    def read(self):
+        return self.ret, self.frame
+
+    def stop(self):
+        self.running = False
+        self.cap.release()
+
+# ----------------- Helper: Recognize using embeddings -----------------
+def recognize_face(frame, face_box):
+    x, y, w, h = map(int, face_box[:4])
+    face_img = frame[y:y+h, x:x+w]
+
+    # Convert to RGB for face_recognition
+    rgb_face = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
+
+    encodings = face_recognition.face_encodings(rgb_face)
+    if len(encodings) == 0:
+        return "Unknown", 0.0
+
+    encoding = encodings[0]
+
+    # Compare with database
+    matches = face_recognition.compare_faces(known_encodings, encoding, tolerance=0.5)
+    face_distances = face_recognition.face_distance(known_encodings, encoding)
+
+    if len(face_distances) > 0:
+        best_match_index = np.argmin(face_distances)
+        if matches[best_match_index]:
+            return known_names[best_match_index], 1 - face_distances[best_match_index]
+
+    return "Unknown", 0.0
+
+# ----------------- Main Loop -----------------
+vs = VideoStream(RTSP_URL)
+frame_count = 0
+faces = None
 
 while True:
-    ret, frame = cap.read()
+    ret, frame = vs.read()
     if not ret:
         break
 
-    # === FAST PATH for detection/recognition (work on a smaller copy) ===
-    small_frame = cv2.resize(frame, (0, 0), fx=0.75, fy=0.75)
-    rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
-
-    if process_this_frame:
-        face_locations = face_recognition.face_locations(rgb_small_frame, model="hog")
-        face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
-
-        face_names = []
-        for fe in face_encodings:
-            matches = face_recognition.compare_faces(known_encodings, fe, tolerance=0.6)
-            name = "Unknown"
-            if True in matches:
-                name = known_names[matches.index(True)]
-            face_names.append(name)
-
-    process_this_frame = not process_this_frame  # skip every 2nd frame for speed
-
-    # === Draw on the ORIGINAL frame (correct scale back) ===
-    scale_back = 1 / 0.75  # = 4/3
-    for (top, right, bottom, left), name in zip(face_locations, face_names):
-        top    = int(top    * scale_back)
-        right  = int(right  * scale_back)
-        bottom = int(bottom * scale_back)
-        left   = int(left   * scale_back)
-
-        cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
-        cv2.rectangle(frame, (left, bottom - 35), (right, bottom), (0, 255, 0), cv2.FILLED)
-        cv2.putText(frame, name, (left + 6, bottom - 8),
-                    cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 1)
-
-    # === Letterbox to fit 1280x720 WITHOUT cropping/zooming ===
+    frame_count += 1
     h, w = frame.shape[:2]
-    sw, sh = screen_res
-    scale = min(sw / w, sh / h)
-    disp_w, disp_h = int(w * scale), int(h * scale)
-    display_frame = cv2.resize(frame, (disp_w, disp_h), interpolation=cv2.INTER_AREA)
+    detector.setInputSize((w, h))
 
-    cv2.imshow("Face Recognition (No Zoom)", display_frame)
+    # Detect every 5 frames for speed
+    if frame_count % 5 == 0:
+        faces = detector.detect(frame)
+
+    if faces is not None and faces[1] is not None:
+        for face in faces[1]:
+            x, y, w, h = map(int, face[:4])
+            conf = face[-1]
+            if conf > 0.8:
+                name, score = recognize_face(frame, face)
+
+                # Draw bounding box + label
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                cv2.putText(frame, f"{name} ({score:.2f})",
+                            (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6, (0, 255, 0), 2)
+
+    # Resize for display
+    frame = cv2.resize(frame, (1280, 720))
+    cv2.imshow("YuNet + FaceRecognition", frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-cap.release()
+vs.stop()
 cv2.destroyAllWindows()
