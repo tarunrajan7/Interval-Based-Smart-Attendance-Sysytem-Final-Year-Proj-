@@ -1,6 +1,7 @@
 import cv2
 import os
 import numpy as np
+import pickle
 
 # Path to your dataset
 dataset_path = r"T:\TARUN\EIE\Final Yr Proj\Dataset"
@@ -33,8 +34,9 @@ for person_name in os.listdir(dataset_path):
             print(f"Skipping {img_path}, cannot read")
             continue
         
-        # Resize to 200x200 for consistency
+        # Resize + Equalize for consistency
         img = cv2.resize(img, (200, 200))
+        img = cv2.equalizeHist(img)
         
         faces.append(img)
         labels.append(current_id)
@@ -45,9 +47,12 @@ for person_name in os.listdir(dataset_path):
 print("Training LBPH recognizer...")
 recognizer.train(faces, np.array(labels))
 
-# Save model
-model_path = "lbph_model.yml"
+# Save model + labels
+model_path = "lbph_model_1.yml"
 recognizer.save(model_path)
+
+with open("labels.pkl", "wb") as f:
+    pickle.dump(id_dict, f)
 
 print(f"Model saved as {model_path}")
 print("Label mapping:", id_dict)

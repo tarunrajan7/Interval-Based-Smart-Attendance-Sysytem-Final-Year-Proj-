@@ -1,13 +1,14 @@
 import cv2
 import threading
-import numpy as np
+import pickle
 
-# ----------------- LBPH Recognizer -----------------
+# ----------------- Load LBPH Recognizer -----------------
 recognizer = cv2.face.LBPHFaceRecognizer_create()
-recognizer.read(r"T:\TARUN\EIE\Final Yr Proj\lbph_model.yml")
+recognizer.read(r"T:\TARUN\EIE\Final Yr Proj\lbph_model_1.yml")
 
-# Label mapping from your training script
-labels = {0: "Rithesh", 1: "Tarun"}
+# Load labels mapping
+with open(r"T:\TARUN\EIE\Final Yr Proj\labels.pkl", "rb") as f:
+    labels = pickle.load(f)   # e.g., {0:"Rithesh", 1:"Tarun"}
 
 # ----------------- RTSP / Webcam -----------------
 RTSP_URL = 0  # use 0 for webcam, or replace with RTSP URL
@@ -67,17 +68,24 @@ while True:
             x, y, ww, hh = map(int, face[:4])
             conf = float(face[-1]) if len(face) >= 15 else 1.0
             if conf > 0.8:
-                # Crop + preprocess for LBPH
-                face_roi = frame[y:y+hh, x:x+ww]
+                # Add padding to crop more face region
+                pad = 20
+                x1 = max(0, x - pad)
+                y1 = max(0, y - pad)
+                x2 = min(w, x + ww + pad)
+                y2 = min(h, y + hh + pad)
+                face_roi = frame[y1:y2, x1:x2]
+
                 if face_roi.size > 0:
                     gray_face = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
                     gray_face = cv2.resize(gray_face, (200, 200))
-                    gray_face = cv2.equalizeHist(gray_face)
+                    gray_face = cv2.equalizeHist(gray_face)  # SAME as training
 
                     label_id, confidence = recognizer.predict(gray_face)
+                    print("Prediction:", label_id, labels.get(label_id, "Unknown"), "Conf:", confidence)
 
-                    # Lower confidence = better match
-                    if confidence < 70:  # threshold, tune if needed
+                    # Lower confidence = better match (tune threshold)
+                    if confidence < 130:  
                         name = labels.get(label_id, "Unknown")
                     else:
                         name = "Unknown"
