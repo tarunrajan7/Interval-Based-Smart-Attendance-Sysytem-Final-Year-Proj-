@@ -1,17 +1,15 @@
 import cv2
 import dlib
 import numpy as np
-import os
 import threading
 
-# ------------------- Dlib Models -------------------
+# ------------------- Load Models -------------------
 PREDICTOR_PATH = "shape_predictor_68_face_landmarks.dat"
 FACE_REC_MODEL_PATH = "dlib_face_recognition_resnet_model_v1.dat"
 
 predictor = dlib.shape_predictor(PREDICTOR_PATH)
 face_rec_model = dlib.face_recognition_model_v1(FACE_REC_MODEL_PATH)
 
-# ------------------- YuNet Detector -------------------
 model = "face_detection_yunet_2023mar.onnx"
 detector = cv2.FaceDetectorYN.create(
     model, "",
@@ -23,53 +21,21 @@ detector = cv2.FaceDetectorYN.create(
     target_id=cv2.dnn.DNN_TARGET_CPU
 )
 
+# ------------------- Load Embeddings -------------------
+data = np.load("dlib_embeddings.npz", allow_pickle=True)
+embeddings = data["embeddings"]
+labels = data["labels"]
+
 # ------------------- Embedding Extractor -------------------
 def get_face_embedding(img, rect):
-    """Align face with landmarks & get 128D embedding"""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     rect_dlib = dlib.rectangle(rect[0], rect[1], rect[2], rect[3])
     shape = predictor(gray, rect_dlib)
     face_chip = dlib.get_face_chip(img, shape, size=150)
     return np.array(face_rec_model.compute_face_descriptor(face_chip))
 
-# ------------------- Dataset Loader -------------------
-def build_dlib_dataset(dataset_path):
-    embeddings = []
-    labels = []
-    names = []
-
-    for person_name in os.listdir(dataset_path):
-        person_dir = os.path.join(dataset_path, person_name)
-        if not os.path.isdir(person_dir):
-            continue
-
-        for img_file in os.listdir(person_dir):
-            img_path = os.path.join(person_dir, img_file)
-            img = cv2.imread(img_path)
-            if img is None:
-                continue
-
-            h, w = img.shape[:2]
-            detector.setInputSize((w, h))
-            faces = detector.detect(img)
-
-            if faces is not None and faces[1] is not None:
-                for face in faces[1]:
-                    x, y, fw, fh = map(int, face[:4])
-                    emb = get_face_embedding(img, (x, y, x+fw, y+fh))
-                    embeddings.append(emb)
-                    labels.append(person_name)
-                    names.append(person_name)
-    return np.array(embeddings), np.array(labels), list(set(names))
-
-dataset_path = "Dataset"  # your dataset folder
-embeddings, labels, unique_names = build_dlib_dataset(dataset_path)
-
 # ------------------- Recognizer -------------------
 def recognize_face(face_emb, threshold=0.6):
-    if len(embeddings) == 0:
-        return "Unknown"
-
     distances = np.linalg.norm(embeddings - face_emb, axis=1)
     min_dist = np.min(distances)
     min_idx = np.argmin(distances)
@@ -79,7 +45,7 @@ def recognize_face(face_emb, threshold=0.6):
     else:
         return "Unknown"
 
-# ------------------- RTSP Video Stream -------------------
+# ------------------- RTSP/Webcam Stream -------------------
 class VideoStream:
     def __init__(self, src):
         self.cap = cv2.VideoCapture(src)
@@ -98,9 +64,7 @@ class VideoStream:
         self.running = False
         self.cap.release()
 
-# Use RTSP or webcam
-vs = VideoStream("rtsp://test:Test@123@192.168.101.72:554/Streaming/Channels/2101")
-
+vs = VideoStream("rtsp://test:Test@123@192.168.101.72:554/Streaming/Channels/2101")  # or RTSP URL
 screen_res = (1280, 720)
 frame_count = 0
 faces_detected = None
@@ -130,6 +94,7 @@ while True:
                 cv2.putText(frame, f"Dlib: {name}", (x, y-5),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
+    # Resize for display
     scale_width = screen_res[0] / frame.shape[1]
     scale_height = screen_res[1] / frame.shape[0]
     scale = min(scale_width, scale_height)

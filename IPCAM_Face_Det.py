@@ -2,7 +2,7 @@ import cv2
 import threading
 
 # RTSP Camera URL
-cap = cv2.VideoCapture("rtsp://test:Test@123@192.168.101.63:554/Streaming/Channels/2101")
+cap = cv2.VideoCapture("rtsp://test:Test@123@192.168.101.72:554/Streaming/Channels/2101")
 
 # Load YuNet model
 model = "face_detection_yunet_2023mar.onnx"
@@ -38,7 +38,7 @@ class VideoStream:
         self.running = False
         self.cap.release()
 
-vs = VideoStream("rtsp://test:Test@123@192.168.101.63:554/Streaming/Channels/2101")
+vs = VideoStream("rtsp://test:Test@123@192.168.101.72:554/Streaming/Channels/2101")
 
 frame_count = 0
 faces = None

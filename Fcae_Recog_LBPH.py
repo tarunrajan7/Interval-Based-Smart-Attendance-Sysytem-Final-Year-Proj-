@@ -1,120 +1,76 @@
 import cv2
-import os
+import dlib
 import numpy as np
-import threading
+import os
 
-# ------------------- Dataset Loader -------------------
-def load_dataset(dataset_path):
-    faces, labels = [], []
-    label_map, current_label = {}, 0
+# Load Dlib models
+detector = dlib.get_frontal_face_detector()
+sp = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
+facerec = dlib.face_recognition_model_v1("dlib_face_recognition_resnet_model_v1.dat")
+
+# ------------------- Step 1: Encode dataset -------------------
+def encode_face_dataset(dataset_path="Dataset"):
+    embeddings, names = [], []
 
     for person_name in os.listdir(dataset_path):
         person_dir = os.path.join(dataset_path, person_name)
         if not os.path.isdir(person_dir):
             continue
 
-        if person_name not in label_map:
-            label_map[person_name] = current_label
-            current_label += 1
-
         for img_file in os.listdir(person_dir):
             img_path = os.path.join(person_dir, img_file)
-            img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-            if img is not None:
-                faces.append(img)
-                labels.append(label_map[person_name])
+            img = cv2.imread(img_path)
+            rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-    return faces, np.array(labels), {v: k for k, v in label_map.items()}
+            dets = detector(rgb_img, 1)
+            for det in dets:
+                shape = sp(rgb_img, det)
+                face_descriptor = facerec.compute_face_descriptor(rgb_img, shape)
+                embeddings.append(np.array(face_descriptor))
+                names.append(person_name)
 
-dataset_path = "Dataset"  # adjust to your dataset folder
-faces, labels, label_map = load_dataset(dataset_path)
+    return embeddings, names
 
-# ------------------- Train LBPH Recognizer -------------------
-lbph = cv2.face.LBPHFaceRecognizer_create()
-lbph.train(faces, labels)
+known_embeddings, known_names = encode_face_dataset("Dataset")
 
-# ------------------- YuNet Detector -------------------
-model = "face_detection_yunet_2023mar.onnx"
-detector = cv2.FaceDetectorYN.create(
-    model, "",
-    (320, 240),
-    score_threshold=0.8,
-    nms_threshold=0.3,
-    top_k=5000,
-    backend_id=cv2.dnn.DNN_BACKEND_OPENCV,
-    target_id=cv2.dnn.DNN_TARGET_CPU
-)
+# ------------------- Step 2: Recognition -------------------
+def recognize_face(frame):
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    dets = detector(rgb_frame, 1)
 
-# ------------------- RTSP Video Stream -------------------
-class VideoStream:
-    def __init__(self, src):
-        self.cap = cv2.VideoCapture(src)
-        self.ret, self.frame = self.cap.read()
-        self.running = True
-        threading.Thread(target=self.update, daemon=True).start()
+    for det in dets:
+        shape = sp(rgb_frame, det)
+        face_descriptor = facerec.compute_face_descriptor(rgb_frame, shape)
+        face_embedding = np.array(face_descriptor)
 
-    def update(self):
-        while self.running:
-            self.ret, self.frame = self.cap.read()
+        # Compare with known embeddings
+        distances = np.linalg.norm(known_embeddings - face_embedding, axis=1)
+        min_index = np.argmin(distances)
+        if distances[min_index] < 0.6:  # threshold
+            name = known_names[min_index]
+        else:
+            name = "Unknown"
 
-    def read(self):
-        return self.ret, self.frame
+        # Draw results
+        x1, y1, x2, y2 = det.left(), det.top(), det.right(), det.bottom()
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(frame, name, (x1, y1 - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-    def stop(self):
-        self.running = False
-        self.cap.release()
+    return frame
 
-vs = VideoStream(0)
-
-screen_res = (1280, 720)
-frame_count = 0
-faces_detected = None
-
-# ------------------- Recognition -------------------
-def recognize_lbph(face_gray):
-    label_id, confidence = lbph.predict(face_gray)
-    if confidence > 80:  # Threshold for Unknown
-        return "Unknown"
-    return label_map.get(label_id, "Unknown")
-
-# ------------------- Main Loop -------------------
+# ------------------- Step 3: Run Live Camera -------------------
+cap = cv2.VideoCapture(0)
 while True:
-    ret, frame = vs.read()
+    ret, frame = cap.read()
     if not ret:
         break
 
-    frame_count += 1
-    h, w = frame.shape[:2]
-    detector.setInputSize((w, h))
-
-    if frame_count % 5 == 0:
-        faces_detected = detector.detect(frame)
-
-    if faces_detected is not None and faces_detected[1] is not None:
-        for face in faces_detected[1]:
-            x, y, fw, fh = map(int, face[:4])
-            conf = face[-1]
-            if conf > 0.8:
-                face_gray = cv2.cvtColor(frame[y:y+fh, x:x+fw], cv2.COLOR_BGR2GRAY)
-                face_resized = cv2.resize(face_gray, (faces[0].shape[1], faces[0].shape[0]))
-
-                name = recognize_lbph(face_resized)
-
-                cv2.rectangle(frame, (x, y), (x + fw, y + fh), (0, 255, 0), 2)
-                cv2.putText(frame, f"LBPH: {name}", (x, y - 5),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-
-    scale_width = screen_res[0] / frame.shape[1]
-    scale_height = screen_res[1] / frame.shape[0]
-    scale = min(scale_width, scale_height)
-    window_width = int(frame.shape[1] * scale)
-    window_height = int(frame.shape[0] * scale)
-    frame = cv2.resize(frame, (window_width, window_height))
-
-    cv2.imshow("YuNet + LBPH Face Recognition", frame)
+    frame = recognize_face(frame)
+    cv2.imshow("Dlib Face Recognition", frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-vs.stop()
+cap.release()
 cv2.destroyAllWindows()
